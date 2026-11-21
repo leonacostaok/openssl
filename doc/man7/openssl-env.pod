@@ -135,6 +135,27 @@ Default is 0. For more info see L<CRYPTO_secure_malloc_init(3)>.
 
 This variable is not considered security-sensitive.
 
+=item B<OPENSSL_TEST_CORPUS_MAX_FILES>
+
+This test-only environment variable is recognised by the fuzz test corpus
+runner. When set to a positive integer, the runner processes at most that
+many corpus files, selected evenly spread over the sorted corpus. It is
+used by the fuzz test recipes to keep budgeted runs within their time
+budget and should generally not be set by users.
+
+This variable is not considered security-sensitive.
+
+=item B<OPENSSL_TEST_CORPUS_MAX_TIME>
+
+This test-only environment variable is recognised by the fuzz test corpus
+runner. When set to a positive number of seconds, the runner stops starting
+new corpus files and failure injection passes once that much processing
+time has elapsed and reports the number of skipped files. It is used by
+the fuzz test recipes to keep budgeted runs within their time budget and
+should generally not be set by users.
+
+This variable is not considered security-sensitive.
+
 =item B<OPENSSL_TEST_LIBCTX>
 
 This test-only environment variable, that is recognised by the L<openssl(1)>
@@ -254,14 +275,14 @@ the L<openssl(1)> program also transcodes the command-line parameters
 from the current code page to UTF-8.
 This environment variable is only checked on Microsoft Windows platforms.
 
-=item B<OPENSSL_armcap>, B<OPENSSL_ia32cap>, B<OPENSSL_ppccap>, B<OPENSSL_riscvcap>, B<OPENSSL_s390xcap>, B<OPENSSL_sparcv9cap>
+=item B<OPENSSL_armcap>, B<OPENSSL_ia32cap>, B<OPENSSL_loongarchcap>, B<OPENSSL_ppccap>, B<OPENSSL_riscvcap>, B<OPENSSL_s390xcap>, B<OPENSSL_sparcv9cap>
 
 OpenSSL supports a number of different algorithm implementations for
 various machines and, by default, it determines which to use based on the
 processor capabilities and run time feature enquiry.  These environment
 variables can be used to exert more control over this selection process.
-See L<OPENSSL_armcap(3)>, L<OPENSSL_ia32cap(3)>, L<OPENSSL_ppccap(3)>,
-L<OPENSSL_riscvcap(3)> and L<OPENSSL_s390xcap(3)>.
+See L<OPENSSL_armcap(3)>, L<OPENSSL_ia32cap(3)>, L<OPENSSL_loongarchcap(3)>,
+L<OPENSSL_ppccap(3)>, L<OPENSSL_riscvcap(3)> and L<OPENSSL_s390xcap(3)>.
 
 These variables are not considered security-sensitive.
 

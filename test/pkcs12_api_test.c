@@ -10,8 +10,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <limits.h>
 
 #include "internal/nelem.h"
+#include "internal/safe_math.h"
 
 #include <openssl/pkcs12.h>
 #include <openssl/x509.h>
@@ -23,6 +25,8 @@
 
 static OSSL_LIB_CTX *testctx = NULL;
 static OSSL_PROVIDER *nullprov = NULL;
+
+OSSL_SAFE_MATH_SIGNED(int, int)
 
 static int test_null_args(void)
 {
@@ -60,6 +64,7 @@ static const char *in_pass = "";
 static int has_key = 0;
 static int has_cert = 0;
 static int has_ca = 0;
+static int version_pass = 1;
 static int expected_ca_count = -1;
 static const char *expected_cert_file = NULL;
 static const char *expected_ca_file = NULL;
@@ -122,6 +127,8 @@ static int pkcs12_parse_test(void)
         if (!TEST_ptr(p12))
             goto err;
 
+        if (!TEST_int_eq(PKCS12_check_version(p12), version_pass))
+            goto err;
         if (!TEST_true(PKCS12_parse(p12, in_pass, &key, &cert, &ca)))
             goto err;
 
@@ -559,6 +566,25 @@ err:
     return ret;
 }
 
+static int pkcs12_check_version_test(void)
+{
+    int ret = 0;
+    PKCS12 *p12 = NULL;
+
+    if (in_file != NULL) {
+        p12 = PKCS12_load(in_file);
+        if (!TEST_ptr(p12))
+            goto err;
+
+        if (!TEST_int_eq(PKCS12_check_version(p12), version_pass))
+            goto err;
+    }
+    ret = 1;
+err:
+    PKCS12_free(p12);
+    return ret;
+}
+
 typedef enum OPTION_choice {
     OPT_ERR = -1,
     OPT_EOF = 0,
@@ -574,6 +600,7 @@ typedef enum OPTION_choice {
     OPT_MISMATCHED_P12,
     OPT_IN_NUM_SKEYS,
     OPT_LEGACY,
+    OPT_BAD_VERSION,
     OPT_TEST_ENUM
 } OPTION_CHOICE;
 
@@ -593,6 +620,7 @@ const OPTIONS *test_get_options(void)
         { "mismatched-key-pass", OPT_MISMATCHED_P12, '-', "Input has key encrypted with a different password" },
         { "num-skeys", OPT_IN_NUM_SKEYS, 'n', "Number of symmetric keys in the input file" },
         { "legacy", OPT_LEGACY, '-', "Test the legacy APIs" },
+        { "badversion", OPT_BAD_VERSION, '-', "Test is expected to fail the version info check" },
         { NULL }
     };
     return options;
@@ -803,6 +831,108 @@ err:
     return ret;
 }
 
+/* (INT_MAX - 2) / 2 is the largest asclen that does not overflow asclen * 2 + 2. */
+static int test_asc2uni_overflow(void)
+{
+    unsigned char *result = NULL;
+    int unilen = 0;
+    int ret = 0;
+
+    result = OPENSSL_asc2uni("A", (INT_MAX - 2) / 2 + 1, &result, &unilen);
+    if (!TEST_ptr_null(result))
+        goto err;
+
+    result = OPENSSL_asc2uni("A", (INT_MAX - 2) / 2 + 2, &result, &unilen);
+    if (!TEST_ptr_null(result))
+        goto err;
+
+    result = OPENSSL_asc2uni("A", INT_MAX, &result, &unilen);
+    if (!TEST_ptr_null(result))
+        goto err;
+
+    result = OPENSSL_asc2uni("", 0, &result, &unilen);
+    if (!TEST_ptr(result))
+        goto err;
+    if (!TEST_int_eq(unilen, 2))
+        goto err;
+
+    ret = 1;
+err:
+    OPENSSL_free(result);
+    return ret;
+}
+
+static int test_asc2uni_outputs(void)
+{
+    unsigned char *result = NULL;
+    unsigned char *out = (unsigned char *)0x1;
+    int unilen = -12345;
+    int ret = 0;
+
+    result = OPENSSL_asc2uni("A", INT_MAX, &out, &unilen);
+    if (!TEST_ptr_null(result))
+        goto err;
+    if (!TEST_ptr_eq(out, (unsigned char *)0x1))
+        goto err;
+    if (!TEST_int_eq(unilen, -12345))
+        goto err;
+
+    result = OPENSSL_asc2uni("", 0, &result, &unilen);
+    if (!TEST_ptr(result))
+        goto err;
+    if (!TEST_int_eq(unilen, 2))
+        goto err;
+    if (!TEST_mem_eq(result, 2, "\0\0", 2))
+        goto err;
+
+    ret = 1;
+err:
+    OPENSSL_free(result);
+    return ret;
+}
+
+static int test_asc2uni_strlen(void)
+{
+    static const unsigned char expected[] = { 0x00, 0x41, 0x00, 0x42, 0x00, 0x00 };
+    unsigned char *result = NULL;
+    int unilen = 0;
+    int ret = 0;
+
+    result = OPENSSL_asc2uni("AB", -1, &result, &unilen);
+    if (!TEST_ptr(result))
+        goto err;
+    if (!TEST_int_eq(unilen, 6))
+        goto err;
+    if (!TEST_mem_eq(result, 6, expected, sizeof(expected)))
+        goto err;
+
+    ret = 1;
+err:
+    OPENSSL_free(result);
+    return ret;
+}
+
+/*
+ * A BMPString of that size (about 2 GB) is too large to allocate in a test, so
+ * this checks the arithmetic through the safe_math helpers instead.
+ */
+static int test_safe_math_asc2uni_boundary(void)
+{
+    int err = 0;
+    int ulen;
+    int max_valid = (INT_MAX - 2) / 2;
+
+    ulen = safe_add_int(safe_mul_int(max_valid, 2, &err), 2, &err);
+    if (!TEST_false(err))
+        return 0;
+    if (!TEST_int_eq(ulen, max_valid * 2 + 2))
+        return 0;
+
+    err = 0;
+    ulen = safe_add_int(safe_mul_int(max_valid + 1, 2, &err), 2, &err);
+    return TEST_true(err);
+}
+
 int setup_tests(void)
 {
     OPTION_CHOICE o;
@@ -844,6 +974,9 @@ int setup_tests(void)
         case OPT_IN_NUM_SKEYS:
             num_skeys = opt_int_arg();
             break;
+        case OPT_BAD_VERSION:
+            version_pass = 0;
+            break;
         case OPT_TEST_CASES:
             break;
         default:
@@ -857,19 +990,26 @@ int setup_tests(void)
         return 0;
     }
 
-    ADD_TEST(test_null_args);
-    ADD_TEST(pkcs12_parse_test);
-    ADD_ALL_TESTS(test_parse_combinations, 8);
-    ADD_ALL_TESTS(test_parse_cert_placement, 8);
-    ADD_TEST(test_parse_mismatched_key_password);
-    ADD_MFAIL_NO_CHECK_TEST(pkcs12_parse_mfail_test);
-    ADD_MFAIL_NO_CHECK_TEST(pkcs12_parse_existing_ca_mfail_test);
-    ADD_ALL_TESTS(pkcs12_create_ex2_test, 3);
-    ADD_TEST(test_PKCS12_set_pbmac1_pbkdf2_saltlen_zero);
-    ADD_TEST(test_PKCS12_set_pbmac1_pbkdf2_invalid_saltlen);
-    ADD_TEST(test_parse_ex_skey);
-    ADD_ALL_TESTS(test_parse_ex_libctx, 2);
-    ADD_ALL_TESTS(test_parse_ex_skey_libctx, 4);
+    ADD_TEST(pkcs12_check_version_test);
+    if (version_pass) {
+        ADD_TEST(test_null_args);
+        ADD_TEST(pkcs12_parse_test);
+        ADD_ALL_TESTS(test_parse_combinations, 8);
+        ADD_ALL_TESTS(test_parse_cert_placement, 8);
+        ADD_TEST(test_parse_mismatched_key_password);
+        ADD_MFAIL_NO_CHECK_TEST(pkcs12_parse_mfail_test);
+        ADD_MFAIL_NO_CHECK_TEST(pkcs12_parse_existing_ca_mfail_test);
+        ADD_ALL_TESTS(pkcs12_create_ex2_test, 3);
+        ADD_TEST(test_PKCS12_set_pbmac1_pbkdf2_saltlen_zero);
+        ADD_TEST(test_PKCS12_set_pbmac1_pbkdf2_invalid_saltlen);
+        ADD_TEST(test_parse_ex_skey);
+        ADD_ALL_TESTS(test_parse_ex_libctx, 2);
+        ADD_ALL_TESTS(test_parse_ex_skey_libctx, 4);
+        ADD_TEST(test_asc2uni_overflow);
+        ADD_TEST(test_asc2uni_outputs);
+        ADD_TEST(test_asc2uni_strlen);
+        ADD_TEST(test_safe_math_asc2uni_boundary);
+    }
     return 1;
 }
 

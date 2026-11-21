@@ -24,6 +24,9 @@
 #if defined(__arm__) || defined(__arm) || defined(__aarch64__)
 #include "arch/arm_arch.h"
 #define CPU_INFO_STR_LEN 128
+#elif defined(__loongarch__)
+#include "arch/loongarch_arch.h"
+#define CPU_INFO_STR_LEN 128
 #elif defined(__powerpc__) || defined(__POWERPC__) || defined(_ARCH_PPC)
 #include "arch/ppc_arch.h"
 #define CPU_INFO_STR_LEN 128
@@ -89,6 +92,13 @@ DEFINE_RUN_ONCE_STATIC(init_info_strings)
     cpu_info_append(CPUINFO_PREFIX "OPENSSL_armcap=0x%x", OPENSSL_armcap_P);
     if ((env = getenv("OPENSSL_armcap")) != NULL)
         cpu_info_append(" env:%s", env);
+#elif defined(__loongarch__)
+    const char *env;
+
+    cpu_info_append(CPUINFO_PREFIX "OPENSSL_loongarchcap=0x%x",
+        OPENSSL_loongarch_hwcap_P);
+    if ((env = getenv("OPENSSL_loongarchcap")) != NULL)
+        cpu_info_append(" env:%s", env);
 #elif defined(__powerpc__) || defined(__POWERPC__) || defined(_ARCH_PPC)
     const char *env;
 
@@ -118,7 +128,9 @@ DEFINE_RUN_ONCE_STATIC(init_info_strings)
                                    "prno:0x%llx:0x%llx:"
                                    "kma:0x%llx:0x%llx:"
                                    "pcc:0x%llx:0x%llx:"
-                                   "kdsa:0x%llx:0x%llx",
+                                   "kdsa:0x%llx:0x%llx:"
+                                   "cex_min_bits:%u"
+                                   "%s",
         OPENSSL_s390xcap_P.stfle[0], OPENSSL_s390xcap_P.stfle[1],
         OPENSSL_s390xcap_P.stfle[2], OPENSSL_s390xcap_P.stfle[3],
         OPENSSL_s390xcap_P.kimd[0], OPENSSL_s390xcap_P.kimd[1],
@@ -132,7 +144,13 @@ DEFINE_RUN_ONCE_STATIC(init_info_strings)
         OPENSSL_s390xcap_P.prno[0], OPENSSL_s390xcap_P.prno[1],
         OPENSSL_s390xcap_P.kma[0], OPENSSL_s390xcap_P.kma[1],
         OPENSSL_s390xcap_P.pcc[0], OPENSSL_s390xcap_P.pcc[1],
-        OPENSSL_s390xcap_P.kdsa[0], OPENSSL_s390xcap_P.kdsa[1]);
+        OPENSSL_s390xcap_P.kdsa[0], OPENSSL_s390xcap_P.kdsa[1],
+#ifdef S390X_MOD_EXP
+        OPENSSL_s390xcex_min_bits,
+        (OPENSSL_s390xcex == -1 || OPENSSL_s390xcex_nodev) ? ":nocex" : "");
+#else
+        0, "");
+#endif
     if ((env = getenv("OPENSSL_s390xcap")) != NULL)
         cpu_info_append(" env:%s", env);
 #elif defined(__riscv)

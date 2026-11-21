@@ -1187,7 +1187,14 @@ int tls_construct_extensions(SSL_CONNECTION *s, WPACKET *pkt,
 
     /* Add custom extensions first */
 #ifndef OPENSSL_NO_ECH
-    if ((context & SSL_EXT_CLIENT_HELLO) != 0 && s->ext.ech.attempted == 0)
+    /*
+     * With ECH, the outer ClientHello reuses the custom extensions added
+     * to the inner one, so only reset their flags for the inner. That has
+     * to happen for every inner, as after a HelloRetryRequest the flags
+     * would still be set from the first ClientHello.
+     */
+    if ((context & SSL_EXT_CLIENT_HELLO) != 0
+        && (s->ext.ech.attempted == 0 || s->ext.ech.ch_depth == 1))
         /* On the server side with initialise during ClientHello parsing */
         custom_ext_init(&s->cert->custext);
 #else
@@ -1431,7 +1438,7 @@ static int final_server_name(SSL_CONNECTION *s, unsigned int context, int sent)
                 ss->ext.tick_lifetime_hint = 0;
                 ss->ext.tick_age_add = 0;
                 if (!ssl_generate_session_id(s, ss)) {
-                    SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+                    /* SSLfatal() already called */
                     return 0;
                 }
             } else {
@@ -1732,12 +1739,18 @@ static int final_key_share(SSL_CONNECTION *s, unsigned int context, int sent)
      */
     if (!s->server
         && !sent) {
-        if ((s->ext.psk_kex_mode & TLSEXT_KEX_MODE_FLAG_KE) == 0) {
-            SSLfatal(s, SSL_AD_ILLEGAL_PARAMETER, SSL_R_NO_SUITABLE_KEY_SHARE);
-            return 0;
-        }
+        /*
+         * In a full handshake the ServerHello must carry a key_share, so its
+         * absence is a missing_extension alert (RFC 8446, sections 4.2.8
+         * and 6.2). Only when resuming may the server legitimately omit it,
+         * and then only if we offered psk_ke.
+         */
         if (!s->hit) {
             SSLfatal(s, SSL_AD_MISSING_EXTENSION, SSL_R_NO_SUITABLE_KEY_SHARE);
+            return 0;
+        }
+        if ((s->ext.psk_kex_mode & TLSEXT_KEX_MODE_FLAG_KE) == 0) {
+            SSLfatal(s, SSL_AD_ILLEGAL_PARAMETER, SSL_R_NO_SUITABLE_KEY_SHARE);
             return 0;
         }
     }

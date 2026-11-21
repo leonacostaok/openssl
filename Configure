@@ -471,6 +471,7 @@ my @disablables_algorithms = (
     "ecx",
     "kbkdf",
     "krb5kdf",
+    "kt",
     "gost",
     "idea",
     "ikev2kdf",
@@ -501,6 +502,7 @@ my @disablables_algorithms = (
     "srtpkdf",
     "sshkdf",
     "sskdf",
+    "turboshake",
     "x942kdf",
     "x963kdf",
     "whirlpool",
@@ -518,9 +520,11 @@ my @disablables_features = (
     "autoerrinit",
     "autoload-config",
     "brotli-dynamic",
+    "buildinfo-cflags",
     "buildtest-c++",
     "bulk",
     "cached-fetch",
+    "usdt",
     "dgram",
     "winstore",
     "crypto-mdebug",
@@ -532,6 +536,7 @@ my @disablables_features = (
     "h3demo",
     "hqinterop",
     "deprecated",
+    "dgram-pair-pcap",
     "docs",
     "dso",
     "ech",
@@ -585,7 +590,6 @@ my @disablables_features = (
     "weak-ssl-ciphers",
     "zlib-dynamic",
     "zstd-dynamic",
-
 );
 
 my @disablables = sort (@disablables_protocols,@disablables_algorithms,@disablables_features);
@@ -634,6 +638,7 @@ our %disabled = ( # "what"         => "comment"
                   "allocfail-tests"     => "default",
                   "ct-validation"       => "default",
                   "demos"               => "default",
+                  "dgram-pair-pcap"     => "default",
                   "h3demo"              => "default",
                   "hqinterop"           => "default",
                   "ec_explicit_curves" => "default",
@@ -676,7 +681,7 @@ my @disable_cascades = (
                              "des", "dgram", "dh", "dsa",
                              "ec", "ech",
                              "filenames", "hmac-drbg-kdf",
-                             "idea", "ikev2kdf", "kbkdf", "krb5kdf", "ktls", "lms",
+                             "idea", "ikev2kdf", "kbkdf", "krb5kdf", "kt", "ktls", "lms",
                              "md4", "ml-dsa", "ml-kem", "multiblock",
                              "nextprotoneg", "ocsp", "ocb", "poly1305", "psk",
                              "pvkkdf", "rc2", "rc4", "rmd160",
@@ -685,7 +690,7 @@ my @disable_cascades = (
                              "srp", "srtp", "srtpkdf", "sshkdf", "sskdf",
                              "ssl-trace",
                              "tfo",
-                             "ts", "ui-console", "whirlpool",
+                             "ts", "turboshake", "ui-console", "whirlpool",
                              "x942kdf", "x963kdf",
                              "fips-securitychecks" ],
     sub { $config{processor} eq "386" }
@@ -747,6 +752,7 @@ my @disable_cascades = (
     "thread-pool"       => [ "default-thread-pool" ],
 
     "blake2"            => [ "argon2" ],
+    "turboshake"        => [ "kt" ],
 
     "deprecated-3.0"    => [ "srp" ],
 
@@ -2074,6 +2080,23 @@ unless ($disabled{"unit-tests"}) {
         disable('no-unit-test-support', 'unit-tests');
     }
 }
+
+unless ($disabled{usdt}) {
+    my $cc = $config{CROSS_COMPILE}.$config{CC};
+    # eBPF USDT probes are defined using the DTRACE_PROBE* macros
+    # defined in <sys/sdt.h>. Some platforms including macOS and
+    # FreeBSD have this header as well, though they are incompatible
+    # with USDT probes. Restrict the support for Linux only for now.
+    if ($target =~ m/^linux/) {
+	system("printf '#include <sys/sdt.h>\n' | $cc -E - >/dev/null 2>&1");
+	if ($? != 0) {
+	    disable('no-sys-sdt-h', 'usdt');
+	}
+    } else {
+	disable('not-linux', 'usdt');
+    }
+}
+push @{$config{openssl_other_defines}}, "OPENSSL_NO_USDT" if ($disabled{usdt});
 
 # Get the extra flags used when building shared libraries and modules.  We
 # do this late because some of them depend on %disabled.

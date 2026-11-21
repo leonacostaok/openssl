@@ -17,6 +17,7 @@
 #include "internal/cryptlib.h"
 #include "internal/ssl_unwrap.h"
 #include <openssl/rand.h>
+#include "internal/usdt.h"
 #include "../ssl_local.h"
 #include "statem_local.h"
 #include <assert.h>
@@ -135,6 +136,7 @@ void ossl_statem_clear(SSL_CONNECTION *s)
     ossl_statem_set_in_init(s, 1);
     s->statem.no_cert_verify = 0;
     s->statem.ack_for_retransmit = 0;
+    s->statem.deferred_key_update_state = TLS_ST_BEFORE;
 }
 
 /*
@@ -390,6 +392,10 @@ static int state_machine(SSL_CONNECTION *s, int server)
     cb = get_callback(s);
 
     st->in_handshake++;
+
+    OSSL_USDT_new_context_with_data(s, "tls::handshake",
+        { "tls::role", OSSL_USDT_STRING(s->server ? "server" : "client") });
+
     if (!SSL_in_init(ssl) || SSL_in_before(ssl)) {
         /*
          * If we are stateless then we already called SSL_clear() - don't do
@@ -735,8 +741,10 @@ static SUB_STATE_RETURN read_state_machine(SSL_CONNECTION *s)
                 return SUB_STATE_ERROR;
 
             case MSG_PROCESS_FINISHED_READING:
-                if (SSL_CONNECTION_IS_DTLS(s)) {
-                    dtls1_stop_timer(s);
+                if (SSL_CONNECTION_IS_DTLS(s)
+                    && !dtls1_stop_timer_for_read_flight(s)) {
+                    check_fatal(s);
+                    return SUB_STATE_ERROR;
                 }
                 return SUB_STATE_FINISHED;
 
@@ -768,8 +776,10 @@ static SUB_STATE_RETURN read_state_machine(SSL_CONNECTION *s)
 
             case WORK_FINISHED_SWAP:
             case WORK_FINISHED_STOP:
-                if (SSL_CONNECTION_IS_DTLS(s)) {
-                    dtls1_stop_timer(s);
+                if (SSL_CONNECTION_IS_DTLS(s)
+                    && !dtls1_stop_timer_for_read_flight(s)) {
+                    check_fatal(s);
+                    return SUB_STATE_ERROR;
                 }
                 return SUB_STATE_FINISHED;
             }

@@ -698,6 +698,16 @@ Don't automatically load the default `openssl.cnf` file.
 Typically OpenSSL will automatically load a system config file which configures
 default SSL options.
 
+### no-buildinfo-cflags
+
+Don't record the compiler command line and flags in libcrypto.
+
+By default they are reported by `OpenSSL_version(OPENSSL_CFLAGS)` and
+`openssl version -f`.  As they may contain environment specific paths and
+flags, they make it harder to build bit-for-bit identical binaries in
+different build environments.  With this option they are reported as
+`compiler: information not available` instead.
+
 ### enable-buildtest-c++
 
 While testing, generate C++ buildtest files that simply check that the public
@@ -1044,6 +1054,10 @@ Build with support for TCP Fast Open (RFC7413). Supported on Linux, macOS and Fr
 
 Don't build with QUIC support.
 
+This only disables OpenSSL's built-in QUIC stack, instead of the QUIC TLS API.
+3rd-party applications with their own QUIC stack can still use OpenSSL to integrate TLS
+even in the event of `no-quic`.
+
 ### no-threads
 
 Don't build with support for multi-threaded applications.
@@ -1171,13 +1185,13 @@ accompanied by a corresponding compiler-specific option.
 
 ### no-{protocol}
 
-    no-{ssl|ssl3|tls|tls1|tls1_1|tls1_2|tls1_3|dtls|dtls1|dtls1_2}
+    no-{ssl|ssl3|tls|tls1|tls1_1|tls1_2|tls1_3|dtls|dtls1|dtls1_2|dtls1_3}
 
 Don't build support for negotiating the specified SSL/TLS protocol.
 
 If `no-tls` is selected then all of `tls1`, `tls1_1`, `tls1_2` and `tls1_3`
 are disabled.
-Similarly `no-dtls` will disable `dtls1` and `dtls1_2`.
+Similarly `no-dtls` will disable `dtls1`, `dtls1_2` and `dtls1_3`.
 `no-ssl` and `no-ssl3` are deprecated and do nothing.
 OpenSSL will still provide the methods for applications to explicitly select
 the individual protocol versions.
@@ -1194,7 +1208,7 @@ Analogous to `no-{protocol}` but in addition do not build the methods for
 applications to explicitly select individual protocol versions.  Note that there
 is no `no-tls1_3-method` option because there is no application method for
 TLSv1.3.
-`no-ssl3` is deprecated and does nothing.
+`no-ssl3-method` is deprecated and does nothing.
 
 Using individual protocol methods directly is deprecated.  Applications should
 use `TLS_method()` instead.
@@ -1212,14 +1226,17 @@ The `lms` algorithm support is currently limited to verification only as per
 
     no-{aria|bf|blake2|camellia|cast|chacha|cmac|
         des|dh|dsa|
-        ec|ec2m|ecdh|ecdsa|hmac-drbg-kdf|idea|ikev2kdf|kbkdf|krb5kdf|
+        ec|ec2m|ecdh|ecdsa|hmac-drbg-kdf|idea|ikev2kdf|kbkdf|krb5kdf|kt|
         md4|mdc2|
         ml-dsa|ml-kem|
         ocb|poly1305|pvkkdf|rc2|rc4|rmd160|scrypt|
         seed|siphash|siv|slh-dsa|sm2|sm3|sm4|snmpkdf|srtpkdf|sshkdf|sskdf|
-        x942kdf|x963kdf|whirlpool}
+        turboshake|x942kdf|x963kdf|whirlpool}
 
 Build without support for the specified algorithm.
+
+Disabling `turboshake` also disables `kt`, which depends on the TurboSHAKE
+implementation. Disabling `kt` does not disable TurboSHAKE.
 
 The `ripemd` algorithm is deprecated and if used is synonymous with `rmd160`.
 

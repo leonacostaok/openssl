@@ -73,6 +73,9 @@ int OCSP_request_sign(OCSP_REQUEST *req,
     const EVP_MD *dgst,
     const STACK_OF(X509) *certs, unsigned long flags)
 {
+    OSSL_LIB_CTX *libctx;
+    const char *propq;
+
     if (!OCSP_request_set1_name(req, X509_get_subject_name(signer)))
         goto err;
 
@@ -84,7 +87,8 @@ int OCSP_request_sign(OCSP_REQUEST *req,
                 OCSP_R_PRIVATE_KEY_DOES_NOT_MATCH_CERTIFICATE);
             goto err;
         }
-        if (!OCSP_REQUEST_sign(req, key, dgst, signer->libctx, signer->propq))
+        ossl_x509_get0_libctx(signer, &libctx, &propq);
+        if (!OCSP_REQUEST_sign(req, key, dgst, libctx, propq))
             goto err;
     }
 
@@ -211,18 +215,22 @@ int OCSP_resp_get1_id(const OCSP_BASICRESP *bs,
 /* Look single response matching a given certificate ID */
 int OCSP_resp_find(OCSP_BASICRESP *bs, OCSP_CERTID *id, int last)
 {
-    int i;
+    int i, n;
     STACK_OF(OCSP_SINGLERESP) *sresp;
     OCSP_SINGLERESP *single;
 
     if (bs == NULL)
         return -1;
+    sresp = bs->tbsResponseData.responses;
+    n = sk_OCSP_SINGLERESP_num(sresp);
+    /* Nothing can follow last; this also keeps last + 1 in range */
+    if (last >= n)
+        return -1;
     if (last < 0)
         last = 0;
     else
         last++;
-    sresp = bs->tbsResponseData.responses;
-    for (i = last; i < sk_OCSP_SINGLERESP_num(sresp); i++) {
+    for (i = last; i < n; i++) {
         single = sk_OCSP_SINGLERESP_value(sresp, i);
         if (!OCSP_id_cmp(id, single->certId))
             return i;

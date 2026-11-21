@@ -17,6 +17,7 @@
 #ifndef OPENSSL_NO_ECH
 #include "internal/ech_helpers.h"
 #endif
+#include "internal/usdt.h"
 
 /* Used in the negotiate_dhe function */
 typedef enum {
@@ -1051,6 +1052,7 @@ static int tls13_check_tick_lifetime_hint(SSL_CONNECTION *s)
 {
     OSSL_TIME t;
     uint32_t agesec;
+    unsigned long lifetime;
 
     if (s->ext.tick_age_checked)
         return s->ext.tick_age_ok;
@@ -1085,10 +1087,21 @@ static int tls13_check_tick_lifetime_hint(SSL_CONNECTION *s)
     s->ext.tick_age_ms = agesec * (uint32_t)1000;
 
     /*
-     * Ticket is too old. Ignore it. Overflow. Shouldn't happen unless this is a
-     * *really* old session. If so we just ignore it.
+     * RFC 9846 4.7.1: Servers MUST NOT use any value greater than 604800
+     * seconds (7 days). The value of zero indicates that the ticket should be
+     * discarded immediately. Clients MUST NOT use tickets for longer than 7
+     * days after issuance, regardless of the ticket_lifetime, and MAY delete
+     * tickets earlier based on local policy. A server MAY treat a ticket as
+     * valid for a shorter period of time than what is stated in the
+     * ticket_lifetime.
+     *
+     * The hint is capped when a NewSessionTicket is parsed, but a session
+     * restored with d2i_SSL_SESSION() carries whatever value was serialised.
      */
-    if (s->session->ext.tick_lifetime_hint < agesec)
+    lifetime = s->session->ext.tick_lifetime_hint;
+    if (lifetime > 604800)
+        lifetime = 604800;
+    if (lifetime == 0 || ossl_time_compare(t, ossl_seconds2time(lifetime)) > 0)
         s->ext.tick_age_ok = 0;
     else if (agesec != 0 && s->ext.tick_age_ms / (uint32_t)1000 != agesec)
         s->ext.tick_age_ok = 0;
@@ -1451,7 +1464,7 @@ EXT_RETURN tls_construct_ctos_psk(SSL_CONNECTION *s, WPACKET *pkt,
 {
 #if !(defined(OPENSSL_NO_TLS1_3) && defined(OPENSSL_NO_DTLS1_3))
     uint32_t agems = 0;
-    size_t binderoffset, msglen;
+    size_t binderoffset, msglen, resbinder_end_offset = 0, pskbinder_end_offset = 0;
     int reshashsize = 0, pskhashsize = 0;
     unsigned char *resbinder = NULL, *pskbinder = NULL, *msgstart = NULL;
     const EVP_MD *handmd = NULL, *mdres = NULL, *mdpsk = NULL;
@@ -1682,9 +1695,11 @@ dopsksess:
         || !WPACKET_get_total_written(pkt, &binderoffset)
         || !WPACKET_start_sub_packet_u16(pkt)
         || (dores
-            && !WPACKET_sub_allocate_bytes_u8(pkt, reshashsize, &resbinder))
+            && (!WPACKET_sub_allocate_bytes_u8(pkt, reshashsize, NULL)
+                || !WPACKET_get_total_written(pkt, &resbinder_end_offset)))
         || (s->psksession != NULL
-            && !WPACKET_sub_allocate_bytes_u8(pkt, pskhashsize, &pskbinder))
+            && (!WPACKET_sub_allocate_bytes_u8(pkt, pskhashsize, NULL)
+                || !WPACKET_get_total_written(pkt, &pskbinder_end_offset)))
         || !WPACKET_close(pkt)
         || !WPACKET_close(pkt)
         || !WPACKET_get_total_written(pkt, &msglen)
@@ -1698,6 +1713,11 @@ dopsksess:
     }
 
     msgstart = WPACKET_get_curr(pkt) - msglen;
+    /* Allocating either binder may relocate the packet's backing buffer. */
+    if (dores)
+        resbinder = msgstart + resbinder_end_offset - reshashsize;
+    if (s->psksession != NULL)
+        pskbinder = msgstart + pskbinder_end_offset - pskhashsize;
 
     if (dores && tls_psk_do_binder(s, mdres, msgstart, binderoffset, NULL, resbinder, s->session, 1, 0) != 1) {
         /* SSLfatal() already called */
@@ -2083,6 +2103,8 @@ int tls_parse_stoc_alpn(SSL_CONNECTION *s, PACKET *pkt, unsigned int context,
     size_t len;
     PACKET confpkt, protpkt;
     int valid = 0;
+    size_t eff_alpn_len = 0;
+    unsigned char *eff_alpn = NULL;
 
     /* We must have requested it. */
     if (!s->s3.alpn_sent) {
@@ -2102,8 +2124,21 @@ int tls_parse_stoc_alpn(SSL_CONNECTION *s, PACKET *pkt, unsigned int context,
         return 0;
     }
 
+    eff_alpn = s->ext.alpn;
+    eff_alpn_len = s->ext.alpn_len;
+#ifndef OPENSSL_NO_ECH
+    /*
+     * If we tried ECH and it failed, then we need to compare vs. the
+     * outer alpn, if one was set.
+     */
+    if (s->ext.ech.es != NULL && s->ext.ech.success == 0
+        && s->ext.ech.alpn_outer != NULL) {
+        eff_alpn = s->ext.ech.alpn_outer;
+        eff_alpn_len = s->ext.ech.alpn_outer_len;
+    }
+#endif
     /* It must be a protocol that we sent */
-    if (!PACKET_buf_init(&confpkt, s->ext.alpn, s->ext.alpn_len)) {
+    if (!PACKET_buf_init(&confpkt, eff_alpn, eff_alpn_len)) {
         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
         return 0;
     }
@@ -2417,6 +2452,9 @@ int tls_parse_stoc_key_share(SSL_CONNECTION *s, PACKET *pkt,
         SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_LENGTH_MISMATCH);
         return 0;
     }
+
+    OSSL_USDT_new_context_with_data(s, "tls::key_exchange",
+        { "tls::group", OSSL_USDT_WORD(group_id) });
 
     if (!ginf->is_kem) {
         /* Regular KEX */

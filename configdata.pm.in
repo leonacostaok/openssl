@@ -155,7 +155,7 @@ _____
           my ($configuration_file, $configuration_file_in) = @_;
 
           open CONFIGURATION, ">${configuration_file}.new"
-              or die "Trying to create ${configuration_file_in}.new: $!";
+              or die "Trying to create ${configuration_file}.new: $!";
           $tmpl = OpenSSL::Template->new(TYPE => 'FILE',
                                         SOURCE => $configuration_file_in);
           $tmpl->fill_in(FILENAME => $_,
@@ -211,15 +211,21 @@ _____
             catfile($config{sourcedir}, 'include', 'openssl', 'configuration.h.in');
 
         my $apps_configuration_h =
-            catfile('apps', 'include', 'configuration.h');
+            catfile('apps', 'include', 'app_conf.h');
         my $apps_configuration_h_in =
-            catfile($config{sourcedir}, 'apps', 'include', 'configuration.h.in');
+            catfile($config{sourcedir}, 'apps', 'include', 'app_conf.h.in');
 
         $create_configuration->($configuration_h, $configuration_h_in);
         $update_configuration->($configuration_h, $configuration_h_in);
 
-        $create_configuration->($apps_configuration_h, $apps_configuration_h_in);
-        $update_configuration->($apps_configuration_h, $apps_configuration_h_in);
+        # With no-apps, the apps directory is skipped when the build tree
+        # is populated, so out of source there is no directory to write
+        # this file in.  It isn't needed either, as nothing gets built
+        # in apps/ in that case.
+        unless ($disabled{apps}) {
+            $create_configuration->($apps_configuration_h, $apps_configuration_h_in);
+            $update_configuration->($apps_configuration_h, $apps_configuration_h_in);
+        }
 
         exit(0);
     }
